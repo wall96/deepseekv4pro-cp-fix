@@ -17,7 +17,15 @@ COPY patches/utils/cp_pp_debug.py /sgl-workspace/sglang/python/sglang/srt/utils/
 COPY patches/models/deepseek_v4.py /sgl-workspace/sglang/python/sglang/srt/models/deepseek_v4.py
 COPY patches/managers/scheduler_pp_mixin.py /sgl-workspace/sglang/python/sglang/srt/managers/scheduler_pp_mixin.py
 
+# 根因已确认(见 README/log-analysis.md 第十四节),这两个文件同时带上了 dsv4pro-cp-fix-v2/
+# 的修复(padding 槽 position 不再撞车到 0),用于验证修复是否解决乱码。如果只想要纯诊断、
+# 不带修复的镜像,去掉下面这两行 COPY 即可。
+COPY patches/layers/attention/deepseek_v4_backend.py /sgl-workspace/sglang/python/sglang/srt/layers/attention/deepseek_v4_backend.py
+COPY patches/layers/attention/deepseek_v4_backend_hip_radix.py /sgl-workspace/sglang/python/sglang/srt/layers/attention/deepseek_v4_backend_hip_radix.py
+
 RUN python3 -m py_compile \
     /sgl-workspace/sglang/python/sglang/srt/utils/cp_pp_debug.py \
     /sgl-workspace/sglang/python/sglang/srt/models/deepseek_v4.py \
-    /sgl-workspace/sglang/python/sglang/srt/managers/scheduler_pp_mixin.py
+    /sgl-workspace/sglang/python/sglang/srt/managers/scheduler_pp_mixin.py \
+    /sgl-workspace/sglang/python/sglang/srt/layers/attention/deepseek_v4_backend.py \
+    /sgl-workspace/sglang/python/sglang/srt/layers/attention/deepseek_v4_backend_hip_radix.py

@@ -1,5 +1,11 @@
 # DeepSeek-V4-Pro CP(round-robin-split)精度问题 —— 调试插桩
 
+> **根因已确认,修复见 `../dsv4pro-cp-fix-v2/`。** 本目录的插桩帮我们从真实日志里定位到了
+> 具体分叉点(`G_post_cp_reindex_positions` 显示 CP round-robin 的 padding 槽 position 撞车到
+> 0),过程记录在 `dsv4pro/log-analysis.md` 第十四节。这个镜像现在同时也带上了那份修复
+> (见 `Dockerfile` 里最后两行 `COPY`),方便一边跑一边用 `[CP_DEBUG]` 输出验证修复效果;
+> 如果只要纯诊断、不要修复,把 Dockerfile 里那两行 COPY 去掉即可。
+
 ## 这是什么
 
 **不是修复,是诊断工具。** 排查到目前这一步,静态读代码已经把好几个具体假设(PP 跨 stage 的
