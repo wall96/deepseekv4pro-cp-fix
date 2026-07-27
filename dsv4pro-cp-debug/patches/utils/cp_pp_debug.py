@@ -116,13 +116,17 @@ def cp_debug_dump_dict(
     extra: Optional[dict[str, Any]] = None,
 ) -> None:
     """Same as cp_debug_dump, but for a {name: tensor} dict (e.g. the PP
-    proxy-tensor payload, which may carry more than one named tensor)."""
+    proxy-tensor payload, which may carry more than one named tensor --
+    and, for the send-side raw tensor_dict, a non-tensor "__msg_type__"
+    string sentinel mixed in alongside the real tensors)."""
     if not _CP_DEBUG_DUMP:
         return
     if not tensors:
         cp_debug_dump(tag, None, layer_id=layer_id, extra=extra)
         return
     for name, t in tensors.items():
+        if not isinstance(t, torch.Tensor):
+            continue
         merged_extra = dict(extra or {})
         merged_extra["name"] = name
         cp_debug_dump(tag, t, layer_id=layer_id, extra=merged_extra)
