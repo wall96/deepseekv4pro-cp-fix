@@ -107,6 +107,23 @@ def cp_debug_dump(
         bool(torch.isinf(xf).any().item()),
     )
 
+    # Per-row breakdown for small 2D tensors (e.g. one row per token in a
+    # CP-split chunk). The aggregate mean/absmax/norm above mixes real and
+    # padding rows together, which hides whether a specific row (real token
+    # vs. padding token) is the one carrying an unexpected value -- see
+    # dsv4pro/log-analysis.md section 14 (padding-position-collision
+    # investigation), where this granularity was needed to tell the two
+    # apart after the position fix.
+    if xf.dim() == 2 and xf.shape[0] <= 16:
+        row_norms = xf.norm(dim=1).tolist()
+        row_absmax = xf.abs().amax(dim=1).tolist()
+        logger.warning(
+            "[CP_DEBUG] %s row_norms=%s row_absmax=%s",
+            kv,
+            ["%.6g" % v for v in row_norms],
+            ["%.6g" % v for v in row_absmax],
+        )
+
 
 def cp_debug_dump_dict(
     tag: str,

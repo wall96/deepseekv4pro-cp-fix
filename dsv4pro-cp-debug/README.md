@@ -5,6 +5,15 @@
 > 0),过程记录在 `dsv4pro/log-analysis.md` 第十四节。这个镜像现在同时也带上了那份修复
 > (见 `Dockerfile` 里最后两行 `COPY`),方便一边跑一边用 `[CP_DEBUG]` 输出验证修复效果;
 > 如果只要纯诊断、不要修复,把 Dockerfile 里那两行 COPY 去掉即可。
+>
+> **用户实测:修复后 `G` 点的 position 确认不再撞车,但业务输出仍然乱码。** 说明 padding
+> position 撞车是一个真实 bug,但不是(或不是唯一)导致这次乱码的根因。已经加了第 8 个
+> 打点粒度(不是新 tag,是给现有的 `cp_debug_dump` 加了按行输出):当被打印的张量是
+> `shape[0] <= 16` 的二维张量时(正好覆盖 CP 切分后每个 cp_rank 只剩 1-2 行的场景),额外
+> 打一行 `row_norms=[...]`/`row_absmax=[...]`,把"真实 token 那一行"和"padding token 那一行"
+> 的数值分开看——之前 `A-E`/`PP_SEND`/`PP_RECV` 这些点打的是整个 2 行张量合在一起算的
+> mean/absmax/norm,没法区分是 padding 行本身数值大(无害,反正会被截断丢弃)还是真实
+> token 那一行也被污染了。见 `dsv4pro/log-analysis.md` 第十五节。
 
 ## 这是什么
 
