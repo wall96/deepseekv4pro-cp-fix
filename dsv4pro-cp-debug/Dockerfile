@@ -23,9 +23,14 @@ COPY patches/managers/scheduler_pp_mixin.py /sgl-workspace/sglang/python/sglang/
 COPY patches/layers/attention/deepseek_v4_backend.py /sgl-workspace/sglang/python/sglang/srt/layers/attention/deepseek_v4_backend.py
 COPY patches/layers/attention/deepseek_v4_backend_hip_radix.py /sgl-workspace/sglang/python/sglang/srt/layers/attention/deepseek_v4_backend_hip_radix.py
 
+# 第十八节:C4/C128 压缩 KV 写入路径(out_loc 截断)新增打点,核实"每个 cp_rank 是不是
+# 写到了同一批槽位、真实 token 对应的槽位有没有从头到尾没被写过"这个高度怀疑但未证实的线索。
+COPY patches/layers/attention/dsv4/compressor.py /sgl-workspace/sglang/python/sglang/srt/layers/attention/dsv4/compressor.py
+
 RUN python3 -m py_compile \
     /sgl-workspace/sglang/python/sglang/srt/utils/cp_pp_debug.py \
     /sgl-workspace/sglang/python/sglang/srt/models/deepseek_v4.py \
     /sgl-workspace/sglang/python/sglang/srt/managers/scheduler_pp_mixin.py \
     /sgl-workspace/sglang/python/sglang/srt/layers/attention/deepseek_v4_backend.py \
-    /sgl-workspace/sglang/python/sglang/srt/layers/attention/deepseek_v4_backend_hip_radix.py
+    /sgl-workspace/sglang/python/sglang/srt/layers/attention/deepseek_v4_backend_hip_radix.py \
+    /sgl-workspace/sglang/python/sglang/srt/layers/attention/dsv4/compressor.py

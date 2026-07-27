@@ -91,6 +91,13 @@ def cp_debug_dump(
             x.max().item(),
             x.sum().item(),
         )
+        # Full values for small 1D index tensors (e.g. out_loc write
+        # locations) -- min/max/sum can't tell whether several ranks wrote
+        # to the exact same slot, only the actual index list can. See
+        # dsv4pro/log-analysis.md section 18 (compressor write-path
+        # investigation).
+        if x.dim() == 1 and x.numel() <= 64:
+            logger.warning("[CP_DEBUG] %s values=%s", kv, x.tolist())
         return
 
     xf = x.float()

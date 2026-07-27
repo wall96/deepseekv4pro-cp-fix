@@ -83,6 +83,25 @@ mutate 的共享对象,而不是每个 microbatch 各自独立的一份,不同 m
 [CP_DEBUG] tag=G_post_cp_reindex_positions layer=-1 pp_rank=1 cp_rank=3 meta_id=140234... shape=(37,) dtype=torch.int32 min=3 max=291 sum=5402
 ```
 
+### H/I:C4/C128 压缩 KV 写入路径的 `out_loc`(`layers/attention/dsv4/compressor.py`)
+
+**这两个点是第十八节新加的,专门核实一个高度怀疑但未证实的线索**:`forward_core_compressor`/
+`forward_indexer_compressor` 写压缩 KV cache 时,`out_loc`(`c4_out_loc`/`c128_out_loc`,
+CP 开启时故意保持全局、不按 cp_rank 切片)会被 `out_loc[: new_compressed_kv.shape[0]]`
+截断成"前 N 行"。因为压缩计算这条链路(`compute_kv_score` 的 all-gather、
+`make_compressor_plan` 用的 `forward_batch.extend_seq_lens_cpu`)本来就是按全局 token 数
+设计、不区分开没开 CP,这个"写前 N 行"到底对不对、8 个 cp_rank 是不是在写同一批槽位、
+真实 token 对应的槽位有没有从头到尾没被写过,单靠读代码判断不出来,需要真实数据。
+
+| 标签 | 位置 | 含义 |
+|---|---|---|
+| `H_core_compressor_out_loc_before_truncate` / `H_indexer_compressor_out_loc_before_truncate` | `out_loc[: new_compressed_kv.shape[0]]` 截断之前 | 这个 cp_rank 看到的、完整的全局 `out_loc`(带 `ratio`、`new_compressed_kv_shape`) |
+| `I_core_compressor_out_loc_after_truncate` / `I_indexer_compressor_out_loc_after_truncate` | 截断之后 | 实际要写入 KV cache 的槽位列表 |
+
+int 类型的小张量(`out_loc` 这种)现在除了 `min`/`max`/`sum` 之外,还会额外打一行完整的
+`values=[...]`(数量 <=64 时),方便直接对比不同 cp_rank 截断后的槽位列表是不是完全一样、
+是不是漏掉了某些真实 token 该有的槽位。
+
 ## 怎么用
 
 1. Build:
