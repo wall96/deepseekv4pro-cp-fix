@@ -110,6 +110,23 @@ mutate 的共享对象,而不是每个 microbatch 各自独立的一份,不同 m
 int 类型的小张量(`out_loc` 这种)现在除了 `min`/`max`/`sum` 之外,还会额外打一行完整的
 `values=[...]`(数量 <=64 时),方便直接对比不同 cp_rank 的槽位列表是不是完全一样。
 
+### 实验开关:`SGLANG_TEST_CP_KEEP_SPARSE_PREFILL`(第十九节)
+
+GitHub 调研(`sgl-project/sglang#27384` 等)+ 读代码发现:`arg_groups/deepseek_v4_hook.py`
+的 `validate_deepseek_v4_cp()` 只要 CP 开启就会**无条件**把 `SGLANG_OPT_FLASHMLA_SPARSE_PREFILL`
+(默认 `True`)强制 `.set(False)`——用户在启动命令里设这个环境变量也没用,会被这段校验逻辑
+覆盖。`deepseek_v4_backend.py` 里 prefill attention 按 query 数分派:
+`q.shape[0] > _LARGE_INDEXER_QUERY_THRESHOLD(11673) or envs.SGLANG_OPT_FLASHMLA_SPARSE_PREFILL.get()`
+决定走 `_forward_prefill_sparse`(`flash_mla_sparse_fwd`,大 query 数场景验证最充分)还是
+`flash_mla_with_kvcache`(历史更久的另一套实现)。CP 会把每个 cp_rank 的本地 query 数除以
+`cp_size`,几乎不可能达到 11673,再叠加上面这个强制禁用——**CP 一开,prefill 100% 会被
+切到 `flash_mla_with_kvcache`,永远走不到 `_forward_prefill_sparse`**。
+
+`SGLANG_TEST_CP_KEEP_SPARSE_PREFILL=1` 这个新开关(`environ.py`)让 CP 场景也保留
+`SGLANG_OPT_FLASHMLA_SPARSE_PREFILL=True`,强制走 `_forward_prefill_sparse`,用来验证
+乱码是不是出在 `flash_mla_with_kvcache` 这条被 CP 强制切过去的路径上。**这是纯诊断/测试
+开关,默认关闭(`False`),不开这个环境变量的话行为跟原来完全一样。**
+
 ## 怎么用
 
 1. Build:

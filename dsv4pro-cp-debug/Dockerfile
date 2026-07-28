@@ -29,10 +29,20 @@ COPY patches/layers/attention/deepseek_v4_backend_hip_radix.py /sgl-workspace/sg
 # kv_compressed/out_loc"这个假设。
 COPY patches/layers/attention/dsv4/compressor_v2.py /sgl-workspace/sglang/python/sglang/srt/layers/attention/dsv4/compressor_v2.py
 
+# 第十九节:GitHub 调研发现 CP 开启时会被无条件强制禁用
+# SGLANG_OPT_FLASHMLA_SPARSE_PREFILL,导致 prefill 100% 被切到 flash_mla_with_kvcache
+# 这条历史更久、验证没那么充分的 kernel 路径。加了一个新的测试开关
+# SGLANG_TEST_CP_KEEP_SPARSE_PREFILL=1,可以在不改动其它行为的前提下让 CP 也走
+# _forward_prefill_sparse(flash_mla_sparse_fwd),验证乱码是否消失。
+COPY patches/environ.py /sgl-workspace/sglang/python/sglang/srt/environ.py
+COPY patches/arg_groups/deepseek_v4_hook.py /sgl-workspace/sglang/python/sglang/srt/arg_groups/deepseek_v4_hook.py
+
 RUN python3 -m py_compile \
     /sgl-workspace/sglang/python/sglang/srt/utils/cp_pp_debug.py \
     /sgl-workspace/sglang/python/sglang/srt/models/deepseek_v4.py \
     /sgl-workspace/sglang/python/sglang/srt/managers/scheduler_pp_mixin.py \
     /sgl-workspace/sglang/python/sglang/srt/layers/attention/deepseek_v4_backend.py \
     /sgl-workspace/sglang/python/sglang/srt/layers/attention/deepseek_v4_backend_hip_radix.py \
-    /sgl-workspace/sglang/python/sglang/srt/layers/attention/dsv4/compressor_v2.py
+    /sgl-workspace/sglang/python/sglang/srt/layers/attention/dsv4/compressor_v2.py \
+    /sgl-workspace/sglang/python/sglang/srt/environ.py \
+    /sgl-workspace/sglang/python/sglang/srt/arg_groups/deepseek_v4_hook.py
