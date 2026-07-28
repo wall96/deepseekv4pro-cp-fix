@@ -83,24 +83,32 @@ mutate 的共享对象,而不是每个 microbatch 各自独立的一份,不同 m
 [CP_DEBUG] tag=G_post_cp_reindex_positions layer=-1 pp_rank=1 cp_rank=3 meta_id=140234... shape=(37,) dtype=torch.int32 min=3 max=291 sum=5402
 ```
 
-### H/I:C4/C128 压缩 KV 写入路径的 `out_loc`(`layers/attention/dsv4/compressor.py`)
+### H/I(已作废,`compressor.py` 是死代码):~~C4/C128 压缩 KV 写入路径的 `out_loc`~~
 
-**这两个点是第十八节新加的,专门核实一个高度怀疑但未证实的线索**:`forward_core_compressor`/
-`forward_indexer_compressor` 写压缩 KV cache 时,`out_loc`(`c4_out_loc`/`c128_out_loc`,
-CP 开启时故意保持全局、不按 cp_rank 切片)会被 `out_loc[: new_compressed_kv.shape[0]]`
-截断成"前 N 行"。因为压缩计算这条链路(`compute_kv_score` 的 all-gather、
-`make_compressor_plan` 用的 `forward_batch.extend_seq_lens_cpu`)本来就是按全局 token 数
-设计、不区分开没开 CP,这个"写前 N 行"到底对不对、8 个 cp_rank 是不是在写同一批槽位、
-真实 token 对应的槽位有没有从头到尾没被写过,单靠读代码判断不出来,需要真实数据。
+**这两个标签已经不会再出现了,留着这段是记录踩过的坑**:最初以为
+`layers/attention/dsv4/compressor.py` 的 `forward_core_compressor`/`forward_indexer_compressor`
+(`out_loc[: new_compressed_kv.shape[0]]` 截断)是压缩 KV 写入的实际路径,加了 H/I 两个点,
+但后来发现 **GPU 后端实际 import 的 `CompressorBackendMixin` 来自 `compressor_v2.py`,
+不是 `compressor.py`**——`compressor.py` 那两个函数对这次的部署完全不会被调用,H/I 这两个
+标签在真实日志里注定是零命中。已经把这次的 `COPY` 从 Dockerfile 里换成
+`compressor_v2.py`,详见下面 J/K 两个新点。见 `dsv4pro/log-analysis.md` 第十八节 18.6。
+
+### J/K:真正生效的 C4/C128 压缩 KV 写入路径(`layers/attention/dsv4/compressor_v2.py`)
+
+**这两个点打在真正会执行到的代码上**,核实"CP 开启时,8 个 cp_rank 是不是真的在全局尺度上
+冗余、各自独立地算出完全一样的压缩结果"这个假设——`compressor_v2.py` 全文没有任何
+`cp_rank`/`cp_size` 相关代码,所有 CP 处理都在更上游(`compute_kv_score` 里对 `kv_score`
+的 all-gather),如果这个假设成立,8 个 cp_rank 打出来的 `kv_score_input`/`kv_compressed`/
+`out_loc` 应该逐位完全相同;如果有任何一个 cp_rank 跟别的不一样,就实锤这里是问题所在。
 
 | 标签 | 位置 | 含义 |
 |---|---|---|
-| `H_core_compressor_out_loc_before_truncate` / `H_indexer_compressor_out_loc_before_truncate` | `out_loc[: new_compressed_kv.shape[0]]` 截断之前 | 这个 cp_rank 看到的、完整的全局 `out_loc`(带 `ratio`、`new_compressed_kv_shape`) |
-| `I_core_compressor_out_loc_after_truncate` / `I_indexer_compressor_out_loc_after_truncate` | 截断之后 | 实际要写入 KV cache 的槽位列表 |
+| `K_v2_kv_score_input` | `forward_unified` 里 `compute_kv_score` 之后 | 这个 cp_rank 看到的 kv_score(CP 开启时理论上已经 all-gather 回全局) |
+| `K_v2_out_loc` | `forward_unified` 里 `_get_out_loc` 之后(非 HIP 分支) | 这个 cp_rank 拿到的 `out_loc`(全局长度,理论上 8 个 cp_rank 应该完全一样) |
+| `J_v2_kv_compressed` | `_forward_compress_all_in_one` 里 `compress_forward` 之后 | 压缩计算的实际输出(带 `ratio`/`is_indexer`/`out_loc_shape`) |
 
 int 类型的小张量(`out_loc` 这种)现在除了 `min`/`max`/`sum` 之外,还会额外打一行完整的
-`values=[...]`(数量 <=64 时),方便直接对比不同 cp_rank 截断后的槽位列表是不是完全一样、
-是不是漏掉了某些真实 token 该有的槽位。
+`values=[...]`(数量 <=64 时),方便直接对比不同 cp_rank 的槽位列表是不是完全一样。
 
 ## 怎么用
 

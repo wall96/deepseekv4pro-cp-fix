@@ -23,9 +23,11 @@ COPY patches/managers/scheduler_pp_mixin.py /sgl-workspace/sglang/python/sglang/
 COPY patches/layers/attention/deepseek_v4_backend.py /sgl-workspace/sglang/python/sglang/srt/layers/attention/deepseek_v4_backend.py
 COPY patches/layers/attention/deepseek_v4_backend_hip_radix.py /sgl-workspace/sglang/python/sglang/srt/layers/attention/deepseek_v4_backend_hip_radix.py
 
-# 第十八节:C4/C128 压缩 KV 写入路径(out_loc 截断)新增打点,核实"每个 cp_rank 是不是
-# 写到了同一批槽位、真实 token 对应的槽位有没有从头到尾没被写过"这个高度怀疑但未证实的线索。
-COPY patches/layers/attention/dsv4/compressor.py /sgl-workspace/sglang/python/sglang/srt/layers/attention/dsv4/compressor.py
+# 第十八节:C4/C128 压缩 KV 写入路径打点。compressor.py(v1)已确认是死代码——GPU 后端实际
+# import 的 CompressorBackendMixin 来自 compressor_v2.py,所以这里改成打在真正生效的
+# compressor_v2.py 上,核实"8 个 cp_rank 是不是真的冗余算出完全一样的 kv_score_input/
+# kv_compressed/out_loc"这个假设。
+COPY patches/layers/attention/dsv4/compressor_v2.py /sgl-workspace/sglang/python/sglang/srt/layers/attention/dsv4/compressor_v2.py
 
 RUN python3 -m py_compile \
     /sgl-workspace/sglang/python/sglang/srt/utils/cp_pp_debug.py \
@@ -33,4 +35,4 @@ RUN python3 -m py_compile \
     /sgl-workspace/sglang/python/sglang/srt/managers/scheduler_pp_mixin.py \
     /sgl-workspace/sglang/python/sglang/srt/layers/attention/deepseek_v4_backend.py \
     /sgl-workspace/sglang/python/sglang/srt/layers/attention/deepseek_v4_backend_hip_radix.py \
-    /sgl-workspace/sglang/python/sglang/srt/layers/attention/dsv4/compressor.py
+    /sgl-workspace/sglang/python/sglang/srt/layers/attention/dsv4/compressor_v2.py
