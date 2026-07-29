@@ -129,6 +129,37 @@ hash 路由层被路由到错误的专家——这能完美解释确定性、流
 int 类型的小张量同样会打完整的 `values=[...]`,方便直接看这层是不是 hash 层
 (`is_hash=True`)、`input_ids` 的具体取值序列跟预期的 token 序列是否一致。
 
+### M/N:`flash_mla_with_kvcache` 分支里 `match_num_queries` 的 shape 对齐情况(第二十一节)
+
+单机 B300(不跨机、没有 PP)也复现了乱码之后,排查重心从"PP 相关代码"转回纯粹的
+DeepSeek-V4 + CP 注意力代码本身。`deepseek_v4_backend.py` 的注意力 `forward` 里,
+`flash_mla_with_kvcache` 分支(CP 场景下唯一会走到的路径,见 `SGLANG_TEST_CP_KEEP_SPARSE_PREFILL`
+那节)在真正调用 kernel 之前,有一个 `match_num_queries` 帮手函数:
+
+```python
+def match_num_queries(x, value):
+    if x is None or x.shape[0] == q.shape[0]:
+        return x
+    if x.shape[0] > q.shape[0]:
+        return x[: q.shape[0]]          # <-- 截断成"前 q.shape[0] 行"
+    return _pad_tensor_to_size(x, q.shape[0], value=value)
+```
+
+如果 `extra_indices`(C4 稀疏 indexer 选出来的 topk 页索引,`c4_sparse_page_indices`)
+的行数跟这个 cp_rank 的本地 query 数(`q.shape[0]`)对不上,就会被截断成"全局数组的前 N 行"
+而不是这个 cp_rank 应该拿到的 round-robin 那几行——这跟第十四节 padding 撞车、第十八节
+（已排除的）compressor 截断,是同一个"用错误的下标截断代替正确的 round-robin 切片"模式。
+读代码追了一遍 `c4_sparse_page_indices`/`c4_sparse_topk_lengths` 的构造时机(在
+`init_flashmla_related` 里,而这个函数在 CP 场景下会在 `apply_cp_reindex()` 之后被
+重新调用一次,理论上应该用重新reindex过的本地长度重建),看起来设计上是自洽的——但
+连续几次"看代码觉得是 bug、细看又不是"的教训(compressor.py、Hash MoE `input_ids`)
+让人不敢再只凭读代码下结论,所以直接加了打点用真实数据验证。
+
+| 标签 | 位置 | 含义 |
+|---|---|---|
+| `M_pre_match_num_queries_shapes` | `match_num_queries` 调用之前 | `q`/`swa_page_indices`/`swa_topk_lengths`/`extra_indices`(C4 或 C128)/`extra_topk_lengths` 各自的行数(`shape[0]`),用来看这几个东西在 truncate/pad 之前是不是本来就对得上 |
+| `N_c4_extra_indices_post_match` | `match_num_queries` 处理完之后,仅 `compress_ratio==4` 时 | 处理后的 `extra_indices` 完整取值(小张量会打 `values=[...]`),看这个 cp_rank 拿到的 topk 页索引是不是它自己 round-robin 该有的那一份,还是被截断成了别的 cp_rank/别的全局位置的数据 |
+
 ### 实验开关:`SGLANG_TEST_CP_KEEP_SPARSE_PREFILL`(第十九节)
 
 GitHub 调研(`sgl-project/sglang#27384` 等)+ 读代码发现:`arg_groups/deepseek_v4_hook.py`

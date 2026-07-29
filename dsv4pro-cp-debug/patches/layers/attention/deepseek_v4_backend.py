@@ -52,6 +52,7 @@ from sglang.srt.runtime_context import get_parallel
 from sglang.srt.speculative.eagle_utils import per_step_draft_out_cache_loc
 from sglang.srt.utils import ceil_align, is_xpu
 from sglang.srt.utils.common import is_sm120_supported
+from sglang.srt.utils.cp_pp_debug import cp_debug_dump as _cp_debug_dump
 
 if TYPE_CHECKING:
     from sgl_kernel.flash_mla import FlashMLASchedMeta
@@ -1371,6 +1372,34 @@ class DeepseekV4AttnBackend(
             swa_page_indices = core_attn_metadata.swa_page_indices
             swa_topk_lengths = core_attn_metadata.swa_topk_lengths
 
+            _cp_debug_dump(
+                "M_pre_match_num_queries_shapes",
+                None,
+                layer_id=layer_id,
+                extra={
+                    "compress_ratio": compress_ratio,
+                    "q_shape0": q.shape[0],
+                    "swa_page_indices_shape0": (
+                        swa_page_indices.shape[0]
+                        if swa_page_indices is not None
+                        else None
+                    ),
+                    "swa_topk_lengths_shape0": (
+                        swa_topk_lengths.shape[0]
+                        if swa_topk_lengths is not None
+                        else None
+                    ),
+                    "extra_indices_shape0": (
+                        extra_indices.shape[0] if extra_indices is not None else None
+                    ),
+                    "extra_topk_lengths_shape0": (
+                        extra_topk_lengths.shape[0]
+                        if extra_topk_lengths is not None
+                        else None
+                    ),
+                },
+            )
+
             def match_num_queries(x, value):
                 if x is None or x.shape[0] == q.shape[0]:
                     return x
@@ -1382,6 +1411,14 @@ class DeepseekV4AttnBackend(
             swa_topk_lengths = match_num_queries(swa_topk_lengths, value=1)
             extra_indices = match_num_queries(extra_indices, value=-1)
             extra_topk_lengths = match_num_queries(extra_topk_lengths, value=1)
+
+            if compress_ratio == 4 and extra_indices is not None:
+                _cp_debug_dump(
+                    "N_c4_extra_indices_post_match",
+                    extra_indices,
+                    layer_id=layer_id,
+                    extra={"q_shape0": q.shape[0]},
+                )
 
             if q.ndim == 3:
                 q = q.unsqueeze(1)
