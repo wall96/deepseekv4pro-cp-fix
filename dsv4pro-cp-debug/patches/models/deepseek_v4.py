@@ -1567,6 +1567,16 @@ class DeepseekV4DecoderLayer(nn.Module):
             input_ids = input_ids.tensor_split(s)[r].contiguous()
             input_ids_global = input_ids_global.tensor_split(s)[r].contiguous()
         _cp_debug_dump("B_post_moe_gather_pre_mlp", hidden_states, layer_id=self.layer_id)
+        _cp_debug_dump(
+            "L_pre_mlp_input_ids",
+            input_ids,
+            layer_id=self.layer_id,
+            extra={
+                "is_hash": getattr(self.mlp, "is_hash", None),
+                "use_tp_attn_a2a_scatter": _use_tp_attn_a2a_scatter,
+                "hidden_states_shape": tuple(hidden_states.shape),
+            },
+        )
         hidden_states = self.mlp(
             hidden_states,
             forward_batch,

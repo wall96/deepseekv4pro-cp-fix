@@ -110,6 +110,25 @@ mutate 的共享对象,而不是每个 microbatch 各自独立的一份,不同 m
 int 类型的小张量(`out_loc` 这种)现在除了 `min`/`max`/`sum` 之外,还会额外打一行完整的
 `values=[...]`(数量 <=64 时),方便直接对比不同 cp_rank 的槽位列表是不是完全一样。
 
+### L:MoE 前实际喂给 `self.mlp` 的 `input_ids`(`models/deepseek_v4.py`,第十九节)
+
+第十九节查到 DeepSeek V4 的 Hash MoE(早期 `layer_id < n_hash_layers` 的层)路由完全靠
+`tid2eid[input_ids]` 这个查表,不看 `hidden_states`/router logits——如果 CP 场景下喂给
+`self.mlp` 的 `input_ids` 跟 `hidden_states` 的行对不齐(`moe_a2a_backend="none"` 时
+`cp_round_robin_input_ids` 返回的是全局重排数组,不是这个 cp_rank 的本地切片),会导致
+hash 路由层被路由到错误的专家——这能完美解释确定性、流畅但答非所问的乱码。但代码复算
+下来,`dsa_cp_gather_hidden_states` 跟 `cp_round_robin_input_ids` 的 `is_none()` 分支
+理论上是同一种"按 rank 分块"的重排顺序,`_use_tp_attn_a2a_scatter` 在 CP 开启时又恒为
+`False`(`_use_tp_attn_a2a_scatter = (not _use_cp and ...)`)不会再插一次手——单靠代数推
+不出确切结论,需要看真实数值。
+
+| 标签 | 位置 | 含义 |
+|---|---|---|
+| `L_pre_mlp_input_ids` | `DecoderLayer.forward` 里,`self.mlp(...)` 调用之前,跟 `B_post_moe_gather_pre_mlp` 同一个点 | 这一层实际喂给 MoE 的 `input_ids`(带 `is_hash`/`use_tp_attn_a2a_scatter`/`hidden_states_shape`),用来跟 `hidden_states` 的行对齐情况做交叉验证 |
+
+int 类型的小张量同样会打完整的 `values=[...]`,方便直接看这层是不是 hash 层
+(`is_hash=True`)、`input_ids` 的具体取值序列跟预期的 token 序列是否一致。
+
 ### 实验开关:`SGLANG_TEST_CP_KEEP_SPARSE_PREFILL`(第十九节)
 
 GitHub 调研(`sgl-project/sglang#27384` 等)+ 读代码发现:`arg_groups/deepseek_v4_hook.py`
