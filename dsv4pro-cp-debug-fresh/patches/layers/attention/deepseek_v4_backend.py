@@ -1440,6 +1440,32 @@ class DeepseekV4AttnBackend(
                     extra_indices.shape[-1] % 64 == 0
                 ), f"{extra_indices.shape=}'s last dimension is not aligned to 64"
 
+            _cp_debug_dump(
+                "Q4_swa_page_indices",
+                swa_page_indices,
+                layer_id=layer_id,
+                extra={"compress_ratio": compress_ratio, "q_shape0": q.shape[0]},
+            )
+            _cp_debug_dump(
+                "Q4_swa_topk_lengths",
+                swa_topk_lengths,
+                layer_id=layer_id,
+                extra={"compress_ratio": compress_ratio, "q_shape0": q.shape[0]},
+            )
+            _cp_debug_dump(
+                "Q5_swa_k_cache",
+                swa_k_cache,
+                layer_id=layer_id,
+                extra={"compress_ratio": compress_ratio, "q_shape0": q.shape[0]},
+            )
+            if extra_k_cache is not None:
+                _cp_debug_dump(
+                    "Q5_extra_k_cache",
+                    extra_k_cache,
+                    layer_id=layer_id,
+                    extra={"compress_ratio": compress_ratio, "q_shape0": q.shape[0]},
+                )
+
             if forward_batch.forward_mode.is_extend_without_speculative() and (
                 q.shape[0] > _LARGE_INDEXER_QUERY_THRESHOLD
                 or envs.SGLANG_OPT_FLASHMLA_SPARSE_PREFILL.get()
@@ -1471,6 +1497,12 @@ class DeepseekV4AttnBackend(
                     extra_indices_in_kvcache=extra_indices,
                     extra_topk_length=extra_topk_lengths,
                 )[0]
+                _cp_debug_dump(
+                    "R6_attn_output_sm120",
+                    o,
+                    layer_id=layer_id,
+                    extra={"compress_ratio": compress_ratio, "q_shape0": q.shape[0]},
+                )
             else:
                 if _is_xpu:
                     from sgl_kernel import flash_mla_with_kvcache
@@ -1493,6 +1525,12 @@ class DeepseekV4AttnBackend(
                     extra_indices_in_kvcache=extra_indices,
                     extra_topk_length=extra_topk_lengths,
                 )[0]
+                _cp_debug_dump(
+                    "R6_attn_output",
+                    o,
+                    layer_id=layer_id,
+                    extra={"compress_ratio": compress_ratio, "q_shape0": q.shape[0]},
+                )
 
             o = o.squeeze(1)
             return o

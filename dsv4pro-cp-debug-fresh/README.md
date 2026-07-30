@@ -49,3 +49,25 @@ padding,最干净的复现场景),`grep "\[CP_DEBUG2\]"` 就能捞出这次的�
   一样,说明 `match_num_queries` 对这次请求是个 no-op,截断假设不成立)。
 - 如果不一样,`P3_post_match_extra_indices` 里截断/填充之后的实际取值,是不是这个
   cp_rank 真正该有的那一份 topk 页索引,还是明显是别的 cp_rank/别的全局位置的数据。
+
+## 第二轮追加:P2/P3 已经用真实数据排除(`match_num_queries` 从未触发截断,`extra_indices`
+的 -1/有效值分布完全符合"C4 压缩需要攒够 4 个 token"这个正常设计),转去查压缩 KV cache
+写入 cache 之后的实际内容、以及 SWA(滑动窗口)部分自己的数值
+
+新加的点,还是同一个 attention `forward` 函数里,`match_num_queries` 之后、真正调用
+`flash_mla_with_kvcache`/`flash_mla_with_kvcache_sm120` 之前和之后:
+
+| 标签 | 位置 | 含义 |
+|---|---|---|
+| `Q4_swa_page_indices` | kernel 调用之前 | SWA 滑动窗口的页索引实际取值(小张量会打完整 `values=[...]`) |
+| `Q4_swa_topk_lengths` | 同上 | SWA 每个 query 实际有效的窗口长度 |
+| `Q5_swa_k_cache` | 同上 | 真正从 KV pool 里读出来的 SWA K cache 内容(整块 buffer 的统计量,不是某一行) |
+| `Q5_extra_k_cache` | 同上(`extra_k_cache is not None` 时) | 真正读出来的 C4/C128 压缩 KV cache 内容 |
+| `R6_attn_output` / `R6_attn_output_sm120` | kernel 调用之后 | 这次 attention 计算的实际输出 `o`(mean/absmax/norm/has_nan/has_inf)——这是判断"这一步计算本身是不是已经算出异常结果"最直接的信号 |
+
+重点看:
+- `R6_attn_output` 有没有 `has_nan=True`/数值明显爆炸(对照之前在别的地方看到的量级)。
+- `Q5_swa_k_cache`/`Q5_extra_k_cache` 是不是全零/全 NaN/明显不合理的量级(说明写缓存
+  这一步本身出了问题)。
+- `Q4_swa_page_indices`/`Q4_swa_topk_lengths` 的实际取值是否合理(页索引是不是在合理
+  范围内,不是全 -1 或全 0)。
