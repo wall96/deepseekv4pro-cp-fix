@@ -71,3 +71,31 @@ padding,最干净的复现场景),`grep "\[CP_DEBUG2\]"` 就能捞出这次的�
   这一步本身出了问题)。
 - `Q4_swa_page_indices`/`Q4_swa_topk_lengths` 的实际取值是否合理(页索引是不是在合理
   范围内,不是全 -1 或全 0)。
+
+## 第三轮追加:`R6_attn_output` 用真实数据确认干净(0-60 层全部有界、无 NaN/Inf),
+排查方向转到 attention 之后的 mHC 残差组合、CP 的 gather/reduce_scatter、以及 MoE/FFN
+本身——`patches/models/deepseek_v4.py`(新建,同样直接取自官方 v0.5.15 tag 源码,只加打点)
+
+新增点覆盖 `DeepseekV4DecoderLayer.forward` 里 attention 之后、下一层开始之前的完整路径:
+
+| 标签 | 位置 | 含义 |
+|---|---|---|
+| `T1_post_self_attn` | `self.self_attn(...)` 返回之后 | 模型层面看到的 attention 输出(跟 backend 里的 `R6_attn_output` 对照,理论上应该一致) |
+| `T2_post_hc_post_attn` | 非 fused 分支:`self.hc_post(...)` 把 attention 输出跟 residual 做 mHC 合并之后 | mHC 合并这一步本身有没有引入异常 |
+| `T2_pre_cp_dispatch` | fused/非 fused 两个分支各自收尾处,FFN 侧 input norm 做完之后、CP 相关逻辑开始之前 | 进入 CP gather 之前"最后一次公共状态"是否正常 |
+| `T3_pre_cp_gather` / `T3_post_cp_gather` | `dsa_cp_gather_hidden_states(...)`(`communicator_dsa_cp.py`,`attn_cp_all_gather_into_tensor`)调用前后 | **CP 特有的数据搬运**——把各 cp_rank 本地的 hidden_states all_gather 成一份"全局"buffer 供 MoE 用,这一步gather 出来的顺序/内容是否符合预期 |
+| `T4_pre_mlp` / `T4_post_mlp` | `self.mlp(...)`(MoE/FFN)调用前后 | MoE 专家计算本身输入输出是否正常 |
+| `T5_pre_cp_reduce_scatter` / `T5_post_cp_reduce_scatter` | `dsa_cp_reduce_scatter_hidden_states(...)`(`tensor_split(cp_size)[cp_rank]` + `attn_cp_reduce_scatter_tensor`)调用前后 | CP gather 的逆操作,把 MoE 输出重新切回这个 cp_rank 自己那一份,数值是否正常 |
+| `T6_layer_output` / `T6_layer_output_deferred` | 非 fused 分支最终 `return` 前 / fused 分支(跨层 mHC 融合,状态推迟到下一层)`return` 前 | 这一层最终吐出去的 hidden_states,是不是从这里开始就已经出问题了 |
+
+重点看:
+- 沿着 `T1 → T2_post_hc_post_attn → T2_pre_cp_dispatch → T3_pre_cp_gather → T3_post_cp_gather
+  → T4_pre_mlp → T4_post_mlp → T5_pre_cp_reduce_scatter → T5_post_cp_reduce_scatter →
+  T6_layer_output` 这条链路,找到从"正常"变成"`has_nan=True`/数值爆炸"的**第一个**点,
+  就是根因发生的具体环节。
+- `T3_pre_cp_gather`/`T3_post_cp_gather` 是新的重点怀疑对象:`dsa_cp_gather_hidden_states`
+  用标准 `all_gather` 把各 cp_rank 的本地 buffer 按 cp_rank 顺序拼接,而 round-robin-split
+  切分是按 `slice(cp_rank, None, cp_size)` 做的跨步(strided)切分——拼接后的顺序是
+  `[rank0的token, rank1的token, ...]`,不是原始序列顺序 `[token0, token1, ...]`。MoE 是
+  逐 token 独立计算,理论上顺序不影响结果,但既然是全新怀疑点,还是要拿真实数据确认一遍
+  gather 出来的每个 cp_rank 分片内容对不对,而不是只靠代码推理。
