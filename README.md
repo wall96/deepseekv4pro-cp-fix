@@ -28,6 +28,15 @@ DeepSeek-V4-Pro 在 tp8pp4(H100,PD 分离式部署)下开启 prefill context-par
   确认 `DeepseekV4ForCausalLM` 根本不走这次改动涉及的 `LayerCommunicator` 代码路径,这次修复对
   实际的 forward 路径完全不生效。目录顶部的 `README.md` 有完整的废弃说明。
 
+- **`dsv4pro-fp8-debug/`** —— **独立的、跟 CP 乱码问题无关的另一个问题**的诊断工具。FP8
+  checkpoint(`DeepSeek-V4-Pro-deepgemm-fp8-hf`)在 B300 单机 prefill(`pp_size=1`)启动时
+  `load_weights` 阶段崩溃(`ValueError: Downcasting not allowed: target.dtype=torch.float8_e4m3fn,
+  loaded_weight.dtype=torch.bfloat16`),报错本身不带权重名字,`SGLANG_FP8_IGNORED_LAYERS=lm_head`
+  已验证无效。只改了 `layers/linear.py` 一个文件,给 4 个会走到 `copy_with_check` 的
+  `weight_loader_v2` 实现包了 `try/except` + `e.add_note(prefix=...)`,不改变任何行为,只在真
+  崩溃时多打一行 `[FP8_DEBUG] ...` 定位具体是哪一层。详见该目录下的 `README.md`。**这是纯诊断
+  阶段,还没拿到真实权重名,不要跟上面 CP 乱码的排查记录混为一谈。**
+
 ## 现状
 
 根因已确认并已实施修复(`dsv4pro-cp-fix-v2/`),过程记录在 `dsv4pro/log-analysis.md` 第十一至
